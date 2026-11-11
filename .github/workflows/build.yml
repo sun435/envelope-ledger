@@ -1,0 +1,47 @@
+name: 打包安卓 APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: 安装依赖
+        run: npm ci
+      - name: 拼出离线网页
+        run: node tools/build.js
+      - name: 生成安卓工程
+        run: |
+          npx cap add android
+          npx capacitor-assets generate --android --iconBackgroundColor '#F7F2E8' --splashBackgroundColor '#F7F2E8' --splashBackgroundColorDark '#1B1C29'
+          npx cap sync android
+      - name: 签名和版本号
+        run: |
+          cat signing/signing.gradle >> android/app/build.gradle
+          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/; s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
+      - name: 打包
+        run: cd android && ./gradlew assembleRelease --no-daemon
+      - name: 改名
+        run: cp android/app/build/outputs/apk/release/app-release.apk 信封账本.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 信封账本-apk
+          path: 信封账本.apk
+      - name: 发布到 Releases（手机上直接下载）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: 信封账本 第 ${{ github.run_number }} 版
+          files: 信封账本.apk

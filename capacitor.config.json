@@ -1,0 +1,6 @@
+{
+  "appId": "com.wang.envelopeledger",
+  "appName": "信封账本",
+  "webDir": "www",
+  "android": {"backgroundColor": "#F7F2E8"}
+}

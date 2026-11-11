@@ -1,0 +1,16 @@
+android {
+    signingConfigs {
+        rel {
+            storeFile file("../../signing/ledger.jks")
+            storePassword "ledger123"
+            keyAlias "ledger"
+            keyPassword "ledger123"
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.rel
+            minifyEnabled false
+        }
+    }
+}
