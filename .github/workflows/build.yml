@@ -17,7 +17,8 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
+      - name: 用系统自带的安卓工具
+        run: echo "sdk.dir=$ANDROID_HOME" && ls $ANDROID_HOME/platforms
       - name: 安装依赖
         run: npm ci
       - name: 拼出离线网页
