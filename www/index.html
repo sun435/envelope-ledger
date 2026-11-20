@@ -3,7 +3,16 @@
   const KEY="envelope-ledger.v1";
   let mem=null;const subs=[];
   function load(){if(mem)return mem;try{const t=localStorage.getItem(KEY);if(t)mem=JSON.parse(t)}catch(e){}
-    if(!mem||!mem.records){mem=window.__SEED__?JSON.parse(JSON.stringify(window.__SEED__)):{records:{},docs:{}};save()}return mem}
+    if(!mem||!mem.records){mem=window.__SEED__?JSON.parse(JSON.stringify(window.__SEED__)):{records:{},docs:{}}}if(!(mem.mig>=2)){migrate(mem);save()}return mem}
+  /* v38：标签并进项目；没用过的暂存删掉 */
+  function migrate(m){if(!m||m.mig>=2)return;const c=m.docs&&m.docs["state/config14"],R=Object.values(m.records||{});
+    if(c&&Array.isArray(c.parts)){
+      for(const p of c.parts){if(p.tags&&p.tags.length){p.items=p.items||[];
+        for(const t of p.tags)if(!p.items.some(i=>i.id===t.id||i.name===t.name))p.items.push({id:t.id,name:t.name});
+        for(const r of R)if(r.part===p.id&&r.tag){if(!r.item){const it=p.items.find(i=>i.id===r.tag)||p.items.find(i=>i.name===(p.tags.find(t=>t.id===r.tag)||{}).name);r.item=it?it.id:""}r.tag=""}}
+        p.tags=[]}
+      const used=new Set(R.map(r=>r.part));c.parts=c.parts.filter(p=>!(p.type==="inbox"&&!used.has(p.id)))}
+    m.mig=2}
   function save(){try{localStorage.setItem(KEY,JSON.stringify(mem))}catch(e){const err=new Error("quota");err.code="quota_exceeded";throw err}}
   function notify(){for(const s of subs)s()}
   const rid=()=>Array.from(crypto.getRandomValues(new Uint8Array(15)),b=>"abcdefghijklmnopqrstuvwxyz0123456789"[b%36]).join("");
@@ -25,7 +34,7 @@
   window.ledgerBackup={
     dump(){return JSON.stringify({app:"envelope-ledger",version:1,exported:new Date().toISOString(),...load()},null,1)},
     restore(text){const o=JSON.parse(text);if(!o||typeof o.records!=="object"||typeof o.docs!=="object")throw new Error("不是账本的备份文件");
-      mem={records:o.records,docs:o.docs};save();notify();return Object.keys(o.records).length}
+      mem={records:o.records,docs:o.docs};migrate(mem);save();notify();return Object.keys(o.records).length}
   };
 })();
 </script><title>信封账本</title>
@@ -1840,10 +1849,7 @@ function partEditSheet(){
   ${capRow("项目",useItems?tot:null)}
   <div class="g-sec">${(p.items||[]).map(it=>{const hb=itemHasBudget(it);return `<button class="g-row g-link" data-act="i-edit" data-item="${it.id}"><span class="g-l">${esc(it.name)}${it.subs&&it.subs.length?`<small>${it.subs.map(s=>esc(s.name)).join("、")}</small>`:""}</span><span class="g-v ${hb?"":"dim"}">${hb?fmt(itemBudget(it)):"只分类"}</span>${CHEV_R}</button>`}).join("")}
     <button class="g-row g-add" data-act="item-new">添加项目</button></div>
-  <div class="g-cap">标签</div>
-  <div class="jtags" style="${cvar(p)}">${(p.tags||[]).map(t=>{const tc=S.confirm==="tag:"+t.id,n=S.records.filter(r=>r.part===p.id&&r.tag===t.id).length;
-      return `<span class="tagin ${tc?"warn":""}"><input data-bind="tag" data-tag="${t.id}" data-f="name" value="${esc(t.name)}" size="${Math.max(2,Array.from(t.name).length+1)}" aria-label="标签名称"><button data-act="tag-del" data-tag="${t.id}" aria-label="删除标签${esc(t.name)}">${tc?(n?n+" 笔会去掉这个标签，确认":"确认"):"×"}</button></span>`}).join("")}</div>
-  <button class="g-row g-add" data-act="tag-new">添加标签</button>`;
+`;
   const nrec=recsOf(p.id).length,pc=S.confirm==="part:"+p.id;
   html+=`<div class="jdanger">${pc&&nrec?reassignRow("part",p.id,nrec,d.parts.filter(x=>x.id!==p.id).map(x=>["part:"+x.id,x.name])):`<button class="g-row g-del" data-act="p-del">${pc?"确认删除这个信封":"删除信封"}</button>`}</div>`;
   return html+`<div class="savebar"><button data-act="close">返回</button><button class="go" data-act="settings-save">保存设置</button></div>`;
@@ -1905,6 +1911,7 @@ async function saveSettings(){
   for(const x of d.reassign)for(const r of S.records.filter(r=>r.kind!=="move"&&r.part===x.part&&(x.item==null||r.item===x.item)&&(x.sub==null||r.sub===x.sub)))if(!(await updateFields(r,x.set)))return;
   for(const x of d.untag)for(const r of S.records.filter(r=>r.part===x.part&&r.tag===x.tag))if(!(await updateFields(r,{tag:""})))return;
   for(const r of S.records.filter(r=>ren[r.account]))if(!(await updateFields(r,{account:ren[r.account]})))return;
+  for(const r of S.records.filter(r=>r.kind==="xfer"&&(ren[r.from]||ren[r.to])))if(!(await updateFields(r,{from:ren[r.from]||r.from,to:ren[r.to]||r.to})))return;
   S.draft=null;S.sheet=null;toast("设置已保存");render();
 }
 
@@ -1997,7 +2004,7 @@ document.addEventListener("click",async ev=>{
     case "tag-del":{if(S.confirm!=="tag:"+t.dataset.tag){S.confirm="tag:"+t.dataset.tag;render();break}
       D.untag.push({part:dp.id,tag:t.dataset.tag});dp.tags=dp.tags.filter(x=>x.id!==t.dataset.tag);S.confirm=null;render();break}
     case "acc-new":D.accounts.push({name:"新账户",orig:null});render();break;
-    case "acc-del":{if(S.confirm!=="acc:"+t.dataset.i){S.confirm="acc:"+t.dataset.i;render();break}S.confirm=null;const ac=D.accounts[+t.dataset.i],nm=ac.orig,n=nm?S.records.filter(r=>r.account===nm).length:0;
+    case "acc-del":{if(S.confirm!=="acc:"+t.dataset.i){S.confirm="acc:"+t.dataset.i;render();break}S.confirm=null;const ac=D.accounts[+t.dataset.i],nm=ac.orig,n=nm?S.records.filter(r=>r.account===nm||r.from===nm||r.to===nm).length:0;
       if(n){toast(`${nm}有 ${n} 笔记录，不能删除，可以改名`);break}D.accounts.splice(+t.dataset.i,1);render();break}
   }
 });
@@ -2271,9 +2278,9 @@ function acctSheet(){
   <div class="ab ab-big" style="${acTone(i)}">${SPINE}${artSvg(nm[0]?"pouch":acArt(a))}
     <span class="ab-txt">${nm[0]?`<b class="ab-n">${esc(nm[0])}</b>`:`<b class="ab-n">余额</b>`}<span class="ab-v ${f.net<0?"neg":""}">${fmt(f.net)}</span>
     <span class="ab-s">进 <em class="pos">+${fmt(f.inn)}</em>　出 <em>−${fmt(f.out)}</em></span></span></div>
-  ${groups.length?groups.map((g,k)=>{const key=a+"|d|"+g.m,open=S.fold[key]??k===0,inn=sum(g.rs.filter(r=>r.kind==="in")),out=sum(g.rs.filter(r=>r.kind==="out"));
+  ${groups.length?groups.map((g,k)=>{const key=a+"|d|"+g.m,open=S.fold[key]??k===0,inn=sum(g.rs.filter(r=>r.kind==="in"||(r.kind==="xfer"&&r.to===a))),out=sum(g.rs.filter(r=>r.kind==="out"||(r.kind==="xfer"&&r.from===a)));
     return `<section class="acm"><button class="acm-h" data-act="gfold" data-key="${esc(key)}" aria-expanded="${open}"><b>${cnMonth(g.m)}</b><span>${inn?`<em class="pos">+${fmt(inn)}</em>`:""}${out?`<em>−${fmt(out)}</em>`:""}${chev()}</span></button>
-      ${open?`<ul class="lls">${g.rs.map(ledgerLine).join("")}</ul>`:""}</section>`}).join(""):`<p class="lg-none">还没有进出</p>`}`;
+      ${open?`<ul class="lls">${g.rs.map(r=>ledgerLine(r,a)).join("")}</ul>`:""}</section>`}).join(""):`<p class="lg-none">还没有进出</p>`}`;
 }
 
 /* ===== v35 首页的票、账单的小票：和信封、存折同一张纸 ===== */
@@ -2310,7 +2317,7 @@ function vHome(){
   const recent=sorted(S.records.filter(r=>r.kind!=="move")).slice(0,8),days=[];
   for(const r of recent){let d=days.find(x=>x.d===r.date);if(!d)days.push(d={d:r.date,rs:[]});d.rs.push(r)}
   const wd=d=>{const [y,mm,dd]=String(d).split("-").map(Number);return y?"周"+WD[new Date(y,mm-1,dd).getDay()]:""};
-  const row=r=>{const p=part(r.part),tg=r.kind==="out"?tagName(p,r.tag):"",sign=r.kind==="in"?"+":"−";
+  const row=r=>{const p=part(r.part),tg=r.kind==="out"?tagName(p,r.tag):"",sign=r.kind==="in"?"+":r.kind==="xfer"?"⇄ ":"−";
     return `<button class="jn-r" style="${cvar(p)}" data-act="rec" data-id="${esc(r.id)}">${p?miniArt(p):`<span class="mart"></span>`}<span class="jn-t">${esc(recTitle(r))}${tg?`<small>${esc(tg)}</small>`:""}</span><span class="jn-a ${sign==="+"?"pos":""}">${sign}${fmt(r.amount)}</span></button>`};
   return `<div class="desk">${mon.map((p,i)=>ticket(p,m,i)).join("")||`<p class="none">没有按月显示的信封</p>`}
   ${n&&inb?`<button class="slip" data-act="part" data-part="${inb.id}"><b>${esc(inb.name)}</b><span>还有 ${n} 笔没分到信封</span></button>`:""}
@@ -2328,6 +2335,121 @@ function ticket(p,m,i){
     <span class="tq-foot"><span class="tq-io">预算 <b>${fmt(s.budget)}</b>　已花 <b>${fmt(s.spent)}</b></span>${s.hasB&&Math.abs(s.diff)>=.005?`<span class="tq-diff ${s.diff>0?"up":"down"}">真实${s.diff>0?"多":"少"} ${fmt(Math.abs(s.diff))}</span>`:""}</span>
     <span class="pv-bar2 tq-bar"><i style="width:${(f*100).toFixed(1)}%"></i></span></button>`;
 }
+
+/* =========================================================
+   v38 记一笔：支出 / 收入 / 转账；信封横滑，项目横滑，
+   账户 / 日期 / 月份是圆角下拉；写备注时计算器收起
+   ========================================================= */
+const accName=a=>String(a||"").replace("~","·");
+const accArtSvg=(a,cls)=>`<svg class="${cls}" viewBox="0 0 60 60" aria-hidden="true">${AC_ART[String(a).includes("~")?"pouch":acArt(a)]}</svg>`;
+function lastXfer(){return sorted(S.records.filter(r=>r.kind==="xfer"))[0]}
+const _openAdd=openAdd;
+openAdd=function(o={}){
+  if(o.kind==="xfer"){const l=lastXfer(),acs=S.config.accounts,date=today();
+    S.form={kind:"xfer",from:l&&acs.includes(l.from)?l.from:acs[0]||"",to:l&&acs.includes(l.to)?l.to:acs[1]||"",expr:"",date,note:"",err:"",part:(parts()[0]||{}).id,month:date.slice(0,7),item:"",sub:"",tag:"",account:""};
+    S.pick=null;S.sheet={type:"add",back:S.sheet&&S.sheet.type!=="add"?S.sheet:null};render();return}
+  S.pick=null;_openAdd(o);
+  const f=S.form;if(f&&!f.account)f.account=S.config.accounts[0]||"";
+};
+const _openEdit=openEdit;
+openEdit=function(r){
+  S.pick=null;
+  if(r.kind==="xfer"){S.form={editId:r.id,orig:r,kind:"xfer",from:r.from,to:r.to,expr:r.formula||String(r.amount),date:r.date||today(),note:r.note||"",err:"",part:(parts()[0]||{}).id,month:r.month||"",item:"",sub:"",tag:"",account:""};
+    S.sheet={type:"add",back:S.sheet};render();return}
+  _openEdit(r);
+};
+function datePill(f){const [y,m,d]=String(f.date).split("-").map(Number),isT=f.date===today();
+  return `<label class="xp"><span class="xd">${d||"?"}</span><span class="xt"><small>${m||"?"}月</small><b>${isT?"今天":"周"+WD[new Date(y,m-1,d).getDay()]}</b></span><u>▾</u><input id="f-date" type="date" value="${esc(f.date)}" aria-label="日期"></label>`}
+function accPill(k,label,a,grow){return `<button class="xp ${grow?"grow":""} ${S.pick===k?"open":""}" data-act="pk" data-v="${k}">${a?accArtSvg(a,"xa"):`<span class="xa"></span>`}<span class="xt"><small>${label}</small><b>${a?esc(accName(a)):"选账户"}</b></span><u>▾</u></button>`}
+function pickerHTML(){
+  const f=S.form,k=S.pick;if(!k)return "";
+  let title="",rows="";
+  if(k==="month"){title="算哪个月";rows=cycleMonths().map(m=>`<button class="pk ${f.month===m?"on":""}" data-act="pk-set" data-v="${m}"><b>${cnMonth(m)}</b>${f.month===m?"<em>✓</em>":""}</button>`).join("")}
+  else{const cur=k==="from"?f.from:k==="to"?f.to:f.account;
+    title=k==="from"?"从哪个账户转出":k==="to"?"转到哪个账户":f.kind==="in"?"进哪个账户":"从哪个账户付";
+    const gs=acGroups();
+    rows=gs.map(x=>x.g?`<div class="pk-g">${esc(x.g)}</div>`+x.items.map(y=>row(y.a,y.sub,true)).join(""):row(x.a,x.a,false)).join("");
+    function row(a,label,sub){const dis=(k==="to"&&a===f.from)||(k==="from"&&a===f.to);
+      return `<button class="pk ${sub?"sub":""} ${cur===a?"on":""}" data-act="pk-set" data-v="${esc(a)}" ${dis?"disabled":""}>${sub?"<i></i>":accArtSvg(a,"pi")}<b>${esc(label)}</b><span>${fmt(acctFlow(a).net)}</span>${cur===a?"<em>✓</em>":""}</button>`}}
+  return `<div class="pk-dim" data-act="pk-close"></div><div class="pk-sheet"><div class="pk-h">${title}</div><div class="pk-l">${rows}</div></div>`;
+}
+function addSheet(){
+  const f=S.form,xf=f.kind==="xfer",p=part(f.part),it=!xf&&p&&(p.items||[]).find(i=>i.id===f.item);
+  const keys=[["7"],["8"],["9"],["÷","op"],["⌫","fn"],["4"],["5"],["6"],["×","op"],["C","fn"],["1"],["2"],["3"],["−","op"],[".","fn"],["0"],["=","op"],["+","op"]];
+  const cs=xf?"--c:var(--e7)":cvar(p);
+  const envs=parts().filter(x=>!isInbox(x));
+  return `<div class="xa-wrap" style="${cs}"><div class="sh-head"><h3>${f.editId?"改一笔":"记一笔"}</h3>${closeBtn()}</div>
+  <div class="xseg">${[["out","支出"],["in","收入"],["xfer","转账"]].map(([v,t])=>`<button class="${f.kind===v?"on":""}" data-act="f-kind" data-v="${v}">${t}</button>`).join("")}</div>
+  <div class="amt xamt ${f.expr?"":"empty"}" id="amt" aria-live="polite">${amtInner()}</div>
+  ${xf?`<div class="xtr"><button class="xtc" data-act="pk" data-v="from" style="--c:var(--e7)">${f.from?accArtSvg(f.from,"xta"):""}<span><small>从</small><b>${esc(accName(f.from)||"选账户")}</b><i>余额 ${fmt(acctFlow(f.from).net)}</i></span></button>
+     <button class="xsw" data-act="f-swap" aria-label="对调">⇅</button>
+     <button class="xtc" data-act="pk" data-v="to" style="--c:var(--play)">${f.to?accArtSvg(f.to,"xta"):""}<span><small>到</small><b>${esc(accName(f.to)||"选账户")}</b><i>余额 ${fmt(acctFlow(f.to).net)}</i></span></button></div>
+     <div class="xps">${datePill(f).replace('class="xp"','class="xp grow"')}</div>`
+  :`<div class="xlb">信封</div><div class="xscr">${envs.map(x=>`<button class="xev ${f.part===x.id?"on":""}" style="${cvar(x)}" data-act="f-part" data-v="${x.id}"><svg viewBox="0 0 60 60" aria-hidden="true">${artOf(x)}</svg><b>${esc(x.name)}</b></button>`).join("")}</div>
+  ${f.kind==="out"&&p&&(p.items||[]).length?`<div class="xlb">项目</div><div class="xscr">${p.items.map(i=>`<button class="xch ${f.item===i.id?"on":""}" data-act="f-item" data-v="${i.id}">${esc(i.name)}</button>`).join("")}<button class="xch ${!f.item?"on":""}" data-act="f-item" data-v="">不分</button></div>`:""}
+  ${f.kind==="out"&&it&&it.subs&&it.subs.length?`<div class="xscr xsub">${it.subs.map(s=>`<button class="xch sm ${f.sub===s.id?"on":""}" data-act="f-sub" data-v="${s.id}">${esc(s.name)}</button>`).join("")}</div>`:""}
+  <div class="xps">${accPill("acc",f.kind==="in"?"进哪个账户":"付款账户",f.account,true)}${datePill(f)}${f.kind==="in"?`<button class="xp ${S.pick==="month"?"open":""}" data-act="pk" data-v="month"><span class="xd m">${parseInt(String(f.month).slice(5),10)||"?"}</span><span class="xt"><small>算哪个月</small><b>${cnMonth(f.month)}</b></span><u>▾</u></button>`:""}</div>`}
+  <input class="xnote" id="f-note" placeholder="备注" value="${esc(f.note)}" aria-label="备注" enterkeyhint="done">
+  <div class="err" id="f-err">${esc(f.err||"")}</div>
+  <div class="pad xpad">${keys.map(([k,c])=>`<button class="k ${c||""}" data-act="key" data-k="${k}" aria-label="${k==="⌫"?"退格":k==="C"?"清空":k}">${k}</button>`).join("")}<button class="k go" data-act="save">保存</button></div>
+  ${pickerHTML()}</div>`;
+}
+const _doSave=doSave;
+doSave=async function(btn){
+  const f=S.form;if(!f||f.kind!=="xfer")return _doSave(btn);
+  readForm();const amt=calc(f.expr),err=m=>{f.err=m;const el=document.getElementById("f-err");if(el)el.textContent=m};
+  if(isNaN(amt)||!(amt>0))return err("先输入一个大于 0 的金额");
+  if(!f.from||!f.to)return err("选好转出和转入的账户");
+  if(f.from===f.to)return err("转出和转入不能是同一个账户");
+  const ex=String(f.expr).replace(/[+−×÷]+$/,"");
+  const rec={kind:"xfer",from:f.from,to:f.to,amount:amt,date:f.date,month:f.date.slice(0,7),note:f.note.trim(),formula:hasOp(ex)?ex:"",created:f.orig?f.orig.created||Date.now():Date.now()};
+  if(btn)btn.disabled=true;
+  const ok=f.editId?await updateRecord(f.editId,rec):await addRecord(rec);
+  if(ok){toast((f.editId?"已更新 · ":"转好了 · ")+accName(f.from)+" → "+accName(f.to)+" "+fmt(amt));goBack()}else if(btn)btn.disabled=false;
+};
+/* 新动作 */
+document.addEventListener("click",ev=>{const t=ev.target.closest("[data-act]");if(!t||!S.form)return;const a=t.dataset.act,f=S.form;
+  const stop=()=>{ev.stopImmediatePropagation();ev.preventDefault()};
+  if(a==="f-kind"&&t.dataset.v==="xfer"){stop();readForm();if(f.kind==="xfer")return;const l=lastXfer(),acs=S.config.accounts;
+    f.kind="xfer";f.err="";f.from=f.from||(l&&acs.includes(l.from)?l.from:f.account||acs[0]||"");f.to=f.to||(l&&acs.includes(l.to)?l.to:acs.find(x=>x!==f.from)||"");render();return}
+  if(a==="f-kind"&&f.kind==="xfer"){stop();readForm();const p=part(f.part)||parts().find(x=>!isInbox(x));f.part=p.id;f.kind=t.dataset.v;f.month=f.date.slice(0,7);
+    if(f.kind==="out"){f.item=((p.items||[])[0]||{}).id||"";f.sub=firstSub(f)}f.account=lastAcct(p.id,f.kind)||f.from||S.config.accounts[0]||"";render();return}
+  if(a==="pk"){stop();readForm();S.pick=S.pick===t.dataset.v?null:t.dataset.v;render();return}
+  if(a==="pk-close"){stop();S.pick=null;render();return}
+  if(a==="pk-set"){stop();const v=t.dataset.v;if(S.pick==="month")f.month=v;else if(S.pick==="from")f.from=v;else if(S.pick==="to")f.to=v;else f.account=v;S.pick=null;render();return}
+  if(a==="f-swap"){stop();readForm();[f.from,f.to]=[f.to,f.from];render();return}
+  if(a==="f-part"||a==="f-kind"){setTimeout(()=>{if(S.form&&!S.form.account){S.form.account=S.config.accounts[0]||"";render()}},0)}
+},true);
+/* 日期改了就刷新那个小框 */
+document.addEventListener("change",ev=>{if(ev.target&&ev.target.id==="f-date"&&S.form){readForm();render()}},true);
+/* 写备注时：计算器收起，输入框露出来 */
+document.addEventListener("focusin",ev=>{if(ev.target&&ev.target.id==="f-note"){const sh=ev.target.closest(".sheet");if(sh)sh.classList.add("typing");setTimeout(()=>ev.target.scrollIntoView({block:"center",behavior:"smooth"}),250)}});
+document.addEventListener("focusout",ev=>{if(ev.target&&ev.target.id==="f-note"){const sh=ev.target.closest(".sheet");setTimeout(()=>{if(sh&&document.activeElement!==ev.target)sh.classList.remove("typing")},120)}});
+document.addEventListener("keydown",ev=>{if(ev.key==="Enter"&&ev.target&&ev.target.id==="f-note"){ev.preventDefault();ev.target.blur()}});
+/* 转账在列表、详情、账户里怎么显示 */
+const _recTitle=recTitle;recTitle=function(r){return r.kind==="xfer"?accName(r.from)+" → "+accName(r.to):_recTitle(r)};
+const _recSub=recSub;recSub=function(r){return r.kind==="xfer"?(r.note||"转账"):_recSub(r)};
+acctFlow=function(a){
+  const rs=S.records.filter(r=>((r.kind==="in"||r.kind==="out")&&(r.account||"")===a)||(r.kind==="xfer"&&(r.from===a||r.to===a)));
+  const inn=sum(rs.filter(r=>r.kind==="in"||(r.kind==="xfer"&&r.to===a))),out=sum(rs.filter(r=>r.kind==="out"||(r.kind==="xfer"&&r.from===a)));
+  return {rs,inn,out,net:r2(inn-out)};
+};
+const _ledgerLine=ledgerLine;
+ledgerLine=function(r,acct){
+  if(r.kind!=="xfer")return _ledgerLine(r);
+  const out=acct&&acct===r.from,inn=acct&&acct===r.to,title=out?"转到 "+accName(r.to):inn?"从 "+accName(r.from)+" 转来":recTitle(r);
+  return `<li><button class="ll xf" style="--c:var(--muted)" data-act="rec" data-id="${esc(r.id)}"><span class="ll-d">${esc(String(r.date).slice(5).replace("-","/"))}</span><span class="ll-dot"></span><span class="ll-t">${esc(title)}${r.note?`<small>${esc(r.note)}</small>`:""}</span><span class="ll-r"></span><span class="ll-a ${inn?"pos":""}">${out?"−":inn?"+":"⇄ "}${fmt(r.amount)}</span></button></li>`;
+};
+const _recSheet=recSheet;
+recSheet=function(){
+  const r=S.records.find(x=>x.id===S.sheet.id);if(!r||r.kind!=="xfer")return _recSheet();
+  const rows=[["日期",r.date],["从",accName(r.from)],["到",accName(r.to)]];if(r.formula)rows.push(["算式",r.formula]);
+  return `<div class="sh-head"><h3>转账</h3>${closeBtn()}</div>
+  <div class="stat"><div class="big num">⇄ ${fmt(r.amount)}</div>
+  ${r.note?`<p class="memo" style="margin-top:14px">${esc(r.note)}</p>`:""}
+  <div style="margin-top:8px">${rows.map(([k,v])=>`<div class="kv"><span>${k}</span><span>${esc(v)}</span></div>`).join("")}</div></div>
+  <button class="editbtn" data-act="edit" data-id="${esc(r.id)}">编辑</button><button class="save danger" style="margin-top:10px" data-act="del" data-id="${esc(r.id)}">${S.confirm==="del:"+r.id?"确认删除":"删除"}</button>`;
+};
 
 boot();
 </script>
@@ -2509,7 +2631,72 @@ boot();
 :root[data-theme="dark"] :is(.tq-stub b,.tq-stub i,.tq7 .tq-n,.tq7 .tq-big,.tq7 .tq-l){color:color-mix(in srgb,var(--c) 40%,#fff)}
 :root .tq7.over :is(.tq-big,.tq-l){color:var(--bad)!important}
 </style><style>.bst{display:flex;gap:6px}.bst .bs{flex:1 1 0;min-width:0;padding:8px 0 7px}.bs b{font-size:15px;white-space:nowrap}.bs span{font-size:10px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}@media (max-width:340px){.bs b{font-size:13px}.bs span{font-size:9px}}</style>
-</body></html><script>/* 设置页里的「导出备份 / 从备份恢复」 */
+<style>/* v38 记一笔 */
+.xa-wrap{--pp:#FCF6EA;--xl:rgba(80,60,40,.14);--xm:#8C7F76;position:relative}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xa-wrap{--pp:#2A2B3D;--xl:rgba(255,255,255,.1);--xm:#A39CA8}}
+:root[data-theme="dark"] .xa-wrap{--pp:#2A2B3D;--xl:rgba(255,255,255,.1);--xm:#A39CA8}
+.xa-wrap .sh-head h3{font-family:var(--brush);font-weight:400;font-size:28px}
+.xseg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:var(--pp);padding:4px;border-radius:14px;box-shadow:0 0 0 1px var(--xl)}
+.xseg button{padding:9px 0;border-radius:10px;font-family:var(--serif);font-weight:700;font-size:15px;color:var(--xm)}
+.xseg button.on{background:var(--ink);color:var(--bg)}
+.xamt{margin:12px 0 2px;background:var(--pp)!important;border:0!important;border-radius:14px!important;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--c) 45%,transparent);padding:10px 16px!important}
+.xamt .res{font-family:var(--serif)!important;font-weight:900!important;font-size:36px!important}
+.xamt .ex{font-family:var(--serif)!important}
+.xlb{font-size:12px;color:var(--xm);letter-spacing:.15em;margin:12px 2px 6px}
+.xscr{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 calc(-1 * max(16px,env(safe-area-inset-right,0px))) 0 0;padding:2px 16px 4px 2px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.xscr::-webkit-scrollbar{display:none}
+.xev{flex:none;width:70px;height:74px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:var(--pp);border-radius:12px;box-shadow:0 0 0 1px var(--xl);scroll-snap-align:start}
+.xev svg{width:38px;height:38px}
+.xev b{font-family:var(--serif);font-weight:700;font-size:12.5px;white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
+.xev.on{background:color-mix(in srgb,var(--c) 15%,var(--pp));box-shadow:0 0 0 2px var(--c)}
+.xch{flex:none;padding:8px 15px;border-radius:999px;background:var(--pp);box-shadow:0 0 0 1px var(--xl);font-family:var(--serif);font-weight:600;font-size:14px;white-space:nowrap}
+.xch.on{background:var(--c);color:#fff;box-shadow:none}
+.xch.sm{padding:6px 12px;font-size:13px}
+.xsub{margin-top:4px}
+.xps{display:flex;gap:8px;margin-top:14px}
+.xp{position:relative;display:flex;align-items:center;gap:8px;padding:7px 10px 7px 8px;background:var(--pp);border-radius:14px;box-shadow:0 0 0 1px var(--xl);min-width:0;text-align:left;cursor:pointer}
+.xp.grow{flex:1}
+.xp.open{box-shadow:0 0 0 2px var(--ink)}
+.xp .xa{width:30px;height:30px;flex:none}
+.xp .xd{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:color-mix(in srgb,var(--meal) 12%,var(--pp));box-shadow:inset 0 3px 0 var(--meal);font-family:var(--serif);font-weight:700;font-size:13px;color:var(--meal);padding-top:3px}
+.xp .xd.m{box-shadow:inset 0 3px 0 var(--play);color:var(--play);background:color-mix(in srgb,var(--play) 12%,var(--pp))}
+.xt{display:flex;flex-direction:column;min-width:0;line-height:1.2}
+.xt small{font-size:10.5px;color:var(--xm)}
+.xt b{font-family:var(--serif);font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xp u{text-decoration:none;color:var(--xm);font-size:11px;margin-left:auto;padding-left:2px}
+.xp input[type=date]{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;cursor:pointer}
+.xnote{display:block;width:100%;margin-top:10px;min-height:46px;padding:12px 14px;background:var(--pp);border:0;border-radius:14px;box-shadow:0 0 0 1px var(--xl);font-size:15px;color:var(--ink);outline:none}
+.xnote:focus{box-shadow:0 0 0 2px var(--c)}
+.xnote::placeholder{color:var(--xm);opacity:.7}
+.xpad .k.go{background:var(--c)!important;color:#fff!important}
+.sheet.typing .xpad{display:none}
+.sheet.typing{padding-bottom:40vh}
+/* 转账 */
+.xtr{position:relative;display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.xtc{display:flex;align-items:center;gap:12px;padding:12px 60px 12px 14px;background:var(--pp);border-radius:14px;box-shadow:inset 4px 0 0 var(--c),0 0 0 1px var(--xl);text-align:left;width:100%}
+.xta{width:44px;height:44px;flex:none}
+.xtc span{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.xtc small{font-size:11px;color:var(--xm);letter-spacing:.2em}
+.xtc b{font-family:var(--serif);font-weight:700;font-size:17px}
+.xtc i{font-style:normal;font-size:11.5px;color:var(--xm)}
+.xsw{position:absolute;right:16px;top:50%;margin-top:-19px;width:38px;height:38px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:18px;box-shadow:0 0 0 4px var(--bg)}
+/* 下拉 */
+.pk-dim{position:fixed;inset:0;background:rgba(30,22,18,.38);z-index:50}
+.pk-sheet{position:fixed;left:0;right:0;bottom:0;z-index:51;max-width:480px;margin:0 auto;max-height:70vh;overflow:auto;background:var(--bg);border-radius:22px 22px 0 0;padding:10px 16px calc(18px + env(safe-area-inset-bottom,0px));box-shadow:0 -10px 30px rgba(0,0,0,.25);animation:up .18s ease-out}
+.pk-h{font-family:var(--brush);font-size:21px;padding:6px 2px 8px}
+.pk-l{display:flex;flex-direction:column}
+.pk{display:flex;align-items:center;gap:12px;width:100%;padding:9px 8px;border-bottom:1px dashed var(--xl);text-align:left}
+.pk:disabled{opacity:.35}
+.pk .pi{width:34px;height:34px;flex:none}
+.pk b{font-family:var(--serif);font-weight:700;font-size:15px}
+.pk span{margin-left:auto;font-family:var(--serif);font-size:13.5px;color:var(--xm)}
+.pk em{font-style:normal;color:var(--c,var(--play));font-weight:900;margin-left:6px}
+.pk.on{background:color-mix(in srgb,var(--play) 14%,var(--pp));border-radius:10px}
+.pk-g{font-size:12px;color:var(--xm);letter-spacing:.2em;margin:12px 2px 2px}
+.pk.sub{padding-left:18px}
+.pk.sub i{width:8px;height:8px;border-radius:50%;background:var(--play);flex:none}
+.ll.xf .ll-dot{background:transparent;border:1.5px dashed var(--muted)}
+</style></body></html><script>/* 设置页里的「导出备份 / 从备份恢复」 */
 (function(){
   const day=()=>{const d=new Date(),p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())};
   async function exportBackup(){

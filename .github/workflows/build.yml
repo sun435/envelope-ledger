@@ -28,6 +28,9 @@ jobs:
           npx cap add android
           npx capacitor-assets generate --android --iconBackgroundColor '#F7F2E8' --splashBackgroundColor '#F7F2E8' --splashBackgroundColorDark '#1B1C29'
           npx cap sync android
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q windowSoftInputMode $M || sed -i 's/<activity /<activity android:windowSoftInputMode="adjustResize" /' $M
+          grep -n windowSoftInputMode $M
       - name: 签名和版本号
         run: |
           cat signing/signing.gradle >> android/app/build.gradle
@@ -35,14 +38,14 @@ jobs:
       - name: 打包
         run: cd android && ./gradlew assembleRelease --no-daemon
       - name: 改名
-        run: cp android/app/build/outputs/apk/release/app-release.apk 信封账本.apk
+        run: cp android/app/build/outputs/apk/release/app-release.apk xinfeng-ledger.apk
       - uses: actions/upload-artifact@v4
         with:
           name: 信封账本-apk
-          path: 信封账本.apk
+          path: xinfeng-ledger.apk
       - name: 发布到 Releases（手机上直接下载）
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: 信封账本 第 ${{ github.run_number }} 版
-          files: 信封账本.apk
+          files: xinfeng-ledger.apk

@@ -3,7 +3,16 @@
   const KEY="envelope-ledger.v1";
   let mem=null;const subs=[];
   function load(){if(mem)return mem;try{const t=localStorage.getItem(KEY);if(t)mem=JSON.parse(t)}catch(e){}
-    if(!mem||!mem.records){mem=window.__SEED__?JSON.parse(JSON.stringify(window.__SEED__)):{records:{},docs:{}};save()}return mem}
+    if(!mem||!mem.records){mem=window.__SEED__?JSON.parse(JSON.stringify(window.__SEED__)):{records:{},docs:{}}}if(!(mem.mig>=2)){migrate(mem);save()}return mem}
+  /* v38：标签并进项目；没用过的暂存删掉 */
+  function migrate(m){if(!m||m.mig>=2)return;const c=m.docs&&m.docs["state/config14"],R=Object.values(m.records||{});
+    if(c&&Array.isArray(c.parts)){
+      for(const p of c.parts){if(p.tags&&p.tags.length){p.items=p.items||[];
+        for(const t of p.tags)if(!p.items.some(i=>i.id===t.id||i.name===t.name))p.items.push({id:t.id,name:t.name});
+        for(const r of R)if(r.part===p.id&&r.tag){if(!r.item){const it=p.items.find(i=>i.id===r.tag)||p.items.find(i=>i.name===(p.tags.find(t=>t.id===r.tag)||{}).name);r.item=it?it.id:""}r.tag=""}}
+        p.tags=[]}
+      const used=new Set(R.map(r=>r.part));c.parts=c.parts.filter(p=>!(p.type==="inbox"&&!used.has(p.id)))}
+    m.mig=2}
   function save(){try{localStorage.setItem(KEY,JSON.stringify(mem))}catch(e){const err=new Error("quota");err.code="quota_exceeded";throw err}}
   function notify(){for(const s of subs)s()}
   const rid=()=>Array.from(crypto.getRandomValues(new Uint8Array(15)),b=>"abcdefghijklmnopqrstuvwxyz0123456789"[b%36]).join("");
@@ -25,6 +34,6 @@
   window.ledgerBackup={
     dump(){return JSON.stringify({app:"envelope-ledger",version:1,exported:new Date().toISOString(),...load()},null,1)},
     restore(text){const o=JSON.parse(text);if(!o||typeof o.records!=="object"||typeof o.docs!=="object")throw new Error("不是账本的备份文件");
-      mem={records:o.records,docs:o.docs};save();notify();return Object.keys(o.records).length}
+      mem={records:o.records,docs:o.docs};migrate(mem);save();notify();return Object.keys(o.records).length}
   };
 })();
