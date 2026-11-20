@@ -29,7 +29,7 @@ jobs:
           npx capacitor-assets generate --android --iconBackgroundColor '#F7F2E8' --splashBackgroundColor '#F7F2E8' --splashBackgroundColorDark '#1B1C29'
           npx cap sync android
           M=android/app/src/main/AndroidManifest.xml
-          grep -q windowSoftInputMode $M || sed -i 's/<activity /<activity android:windowSoftInputMode="adjustResize" /' $M
+          node -e "const f='$M',fs=require('fs');let s=fs.readFileSync(f,'utf8');if(!s.includes('windowSoftInputMode'))s=s.replace('<activity','<activity android:windowSoftInputMode=\"adjustResize\"');fs.writeFileSync(f,s)"
           grep -n windowSoftInputMode $M
       - name: 签名和版本号
         run: |
